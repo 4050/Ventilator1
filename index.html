@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Симулятор ИВЛ T1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: clinical device — calm, legible, loud only when alarming
+   IDEA: the ventilator's own glass screen, plus an instructor's control desk
+   PICTURE: live sweeping waveforms Paw / Flow / Volume with monitored numbers
+   COLOUR and TYPE: device black-navy, amber pressure, teal flow, periwinkle volume, red/yellow alarms; Barlow + Barlow Condensed numerals
+   LAYOUT: vent = alarm bar / waves + numbers / control tiles; instructor = mirror band then panels */
+:root{color-scheme:light dark;--bg:light-dark(#eef2f6,#0e131a);--ink:light-dark(#121820,#e6ebf2);--card:light-dark(#fff,#161e29);--line:light-dark(#d8dfe7,#283342);--mute:light-dark(#566577,#93a1b3);--acc:light-dark(#0a6f96,#4fb6e0);--red:#e0302b;--yel:#f2c200;--blu:#2f7fd0}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Barlow,system-ui,sans-serif;overflow-x:clip}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid #4fb6e0;outline-offset:2px}
+.num{font-family:"Barlow Condensed",Barlow,sans-serif;font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
+small{font-size:13px}
+
+/* start */
+#start{min-height:100vh;display:grid;place-items:center;padding:24px max(5vw,16px)}
+.st{max-width:760px;width:100%}
+.st h1{font-size:clamp(32px,5vw,48px);line-height:1.05;margin:0 0 10px;text-wrap:balance}
+.st p{color:var(--mute);margin:0 0 22px;max-width:62ch}
+.code{display:flex;gap:12px;align-items:end;margin-bottom:18px;flex-wrap:wrap}
+.code label{display:grid;gap:4px;font-size:14px;color:var(--mute)}
+.code input{font-size:22px;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);width:200px;letter-spacing:.06em}
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.role{text-align:left;padding:18px;border-radius:16px;border:1px solid var(--line);background:var(--card);display:grid;gap:6px}
+.role:hover{border-color:var(--acc)}
+.role b{font-size:22px}
+.role span{color:var(--mute);font-size:15px}
+.role svg{width:100%;height:64px;border-radius:8px;background:#0a111b}
+.note{font-size:13px;color:var(--mute);margin-top:18px}
+
+/* ventilator */
+#vent{position:fixed;inset:0;background:#060a10;color:#e8eef6;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:auto}
+.vtop{display:flex;gap:8px;align-items:stretch;padding:8px;background:#0c131e;border-bottom:1px solid #1d2a3c;flex-wrap:wrap}
+.mode{background:#123a5c;border:1px solid #2a6aa0;border-radius:8px;padding:6px 16px;font-weight:700;font-size:20px;color:#fff;min-height:48px}
+.almbar{flex:1 1 260px;border-radius:8px;display:flex;align-items:center;gap:10px;padding:6px 14px;font-weight:600;font-size:18px;background:#111a27;color:#73839a;border:1px solid #1d2a3c;text-align:left;min-height:48px}
+.almbar .cnt{margin-left:auto;font-size:14px;opacity:.85;white-space:nowrap}
+.almbar.hi{background:var(--red);color:#fff;border-color:var(--red);animation:fl 1s steps(2) infinite}
+.almbar.me{background:var(--yel);color:#111;border-color:var(--yel)}
+.almbar.lo{background:var(--blu);color:#fff;border-color:var(--blu)}
+.almbar.off{background:#263244;color:#c8d2de}
+@keyframes fl{50%{background:#a31d18}}
+@media (prefers-reduced-motion:reduce){.almbar.hi{animation:none}}
+.ib{background:#111a27;border:1px solid #24344a;border-radius:8px;min-width:52px;display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 10px;color:#e8eef6;min-height:48px}
+.ib svg{width:22px;height:22px}
+.ib.on{background:#4d3a00;border-color:var(--yel)}
+.clock{font-size:16px;color:#9fb0c5;display:flex;align-items:center;gap:8px;padding:0 6px}
+.dot{width:10px;height:10px;border-radius:50%;background:#4a5565;flex:none;display:inline-block}
+.dot.ok{background:#2fd17a}
+.vmain{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:8px;padding:8px;min-height:0}
+.waves{display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:6px;min-height:0}
+.wave{position:relative;background:#09101a;border:1px solid #162130;border-radius:8px;min-height:96px}
+.wave canvas{position:absolute;inset:0;width:100%;height:100%}
+.wl{position:absolute;left:10px;top:5px;font-size:13px;color:#8fa1b8;z-index:1;pointer-events:none}
+.mon{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;overflow:auto}
+.mv{background:#0c1520;border:1px solid #1a2737;border-radius:8px;padding:5px 10px}
+.mv .n{font-size:13px;color:#8fa1b8;display:flex;justify-content:space-between;gap:6px}
+.mv .v{font-size:30px;font-weight:600;line-height:1.1;text-align:right;font-family:"Barlow Condensed",sans-serif;font-variant-numeric:tabular-nums}
+.mv.big{grid-column:span 2}.mv.big .v{font-size:48px;color:#ffc04a}
+.mv.al{border-color:var(--red)}.mv.al .v{color:#ff6a63}
+.vbot{padding:8px;background:#0c131e;border-top:1px solid #1d2a3c;display:grid;gap:8px}
+.ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:6px}
+.ct{background:#13304c;border:1px solid #2a5c8a;border-radius:10px;padding:6px 10px;text-align:left;color:#fff;display:grid;min-height:70px}
+.ct small{color:#b2c6dc}
+.ct b{font-size:30px;font-family:"Barlow Condensed",sans-serif;font-weight:600;line-height:1}
+.ct.info{background:#0f1c2b;border-style:dashed;cursor:default}
+.ct.info b{font-size:20px}
+.tools{display:flex;gap:6px;flex-wrap:wrap}
+.tl{background:#111a27;border:1px solid #24344a;border-radius:8px;padding:8px 14px;color:#e8eef6;min-height:44px;font-weight:600}
+.tl.on{background:#0c4a38;border-color:#2fd17a}
+.tl.sp{margin-left:auto}
+@media (max-width:820px){
+  #vent{grid-template-rows:auto auto auto}
+  .vmain{grid-template-columns:1fr}
+  .waves{height:390px}
+  .mon{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mv.big{grid-column:span 1}.mv.big .v{font-size:30px}.mv .v{font-size:24px}
+  .tl.sp{margin-left:0}
+}
+.stby{position:absolute;inset:0;background:rgba(4,8,14,.93);display:grid;place-items:center;z-index:5;padding:16px;overflow:auto}
+
+/* sheets (vent) */
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px;z-index:20}
+.sb{background:#101927;border:1px solid #2a3c55;border-radius:14px;width:min(600px,100%);max-height:92vh;overflow:auto;padding:18px;color:#e8eef6}
+.sb h3{margin:0 0 6px;font-size:24px}
+.sb p{margin:0 0 10px;color:#9fb0c5}
+.adj{display:grid;grid-template-columns:72px minmax(0,1fr) 72px;gap:12px;align-items:center;margin:12px 0}
+.adj button{height:72px;font-size:34px;border-radius:12px;background:#1b3350;border:1px solid #2a5c8a;color:#fff}
+.adj .val{text-align:center;font-size:64px;font-weight:600;line-height:1}
+.adj .val small{display:block;font-size:15px;color:#9fb0c5;font-family:Barlow}
+input[type=range]{width:100%;accent-color:#3aa0ff;height:32px}
+.row{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.btn{padding:10px 18px;border-radius:10px;border:1px solid #2a5c8a;background:#1b3350;color:#fff;min-height:46px;font-weight:600}
+.btn.pri{background:#17805a;border-color:#2fd17a}
+.btn.warn{background:#7a2420;border-color:#e0302b}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.mb{background:#13304c;border:1px solid #2a5c8a;border-radius:10px;padding:10px;text-align:left;color:#fff;min-height:70px}
+.mb b{display:block;font-size:20px}.mb small{color:#b2c6dc}
+.mb.sel{background:#17805a;border-color:#2fd17a}
+.tabs{display:flex;gap:6px;margin:6px 0 12px}
+.tabs button{flex:1;padding:8px;border-radius:8px;border:1px solid #2a5c8a;background:#0f1c2b;color:#cfe0f2;min-height:44px;font-weight:600}
+.tabs button.sel{background:#1b3350;color:#fff}
+.alist{display:grid;gap:6px}
+.ai{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:8px;background:#162234}
+.ai time{margin-left:auto;color:#8fa1b8;font-size:14px;white-space:nowrap}
+.ai.off{opacity:.55}
+.lim{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--lline,#22324a)}
+.lim.h{font-size:13px;color:#8fa1b8;border:0;padding:0}
+.lim.h span:not(:first-child){width:136px;text-align:center}
+.stepper{display:flex;align-items:center;gap:4px}
+.stepper button{width:44px;height:44px;border-radius:8px;background:#1b3350;border:1px solid #2a5c8a;color:#fff;font-size:22px;line-height:1}
+.stepper span{min-width:48px;text-align:center;font-size:22px}
+@media (max-width:480px){.lim{grid-template-columns:1fr 1fr}.lim>span:first-child{grid-column:1/-1}.lim.h{display:none}}
+
+/* instructor */
+#inst{max-width:1240px;margin:0 auto;padding:16px max(3vw,12px) 48px}
+.ih{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.ih h1{font-size:clamp(26px,3.4vw,36px);margin:0;line-height:1.05;flex:1 1 260px}
+.pill{padding:5px 12px;border-radius:99px;font-size:14px;background:var(--card);border:1px solid var(--line);display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
+.pill.ok{border-color:#1d9a5a}.pill.bad{border-color:var(--red)}
+a.pill{color:inherit;text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h2{font-size:19px;margin:0 0 4px}
+.card .sub{color:var(--mute);font-size:14px;margin:0 0 12px}
+.mirror{grid-column:1/-1;background:#070c13;color:#e8eef6;border-color:#1c2838}
+.mirror .sub{color:#93a1b3}
+.mh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.mh .md{font-size:28px;font-weight:700;background:#123a5c;border:1px solid #2a6aa0;border-radius:8px;padding:2px 14px}
+.tag{font-size:13px;padding:3px 10px;border-radius:6px;background:#263244;font-weight:600}
+.mir{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px;margin-bottom:8px}
+.mi{background:#0c1520;border:1px solid #1a2737;border-radius:8px;padding:4px 10px}
+.mi small{display:block;color:#8fa1b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mi b{font-family:"Barlow Condensed",sans-serif;font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+.mi.set{background:#102a42;border-color:#22507a}
+.mi.al b{color:#ff6a63}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:4px 10px;border-radius:6px;font-size:14px;font-weight:600}
+.chip.hi{background:var(--red);color:#fff}.chip.me{background:var(--yel);color:#111}.chip.lo{background:var(--blu);color:#fff}.chip.off{background:#263244;color:#aab6c5}
+.sl{display:grid;grid-template-columns:9.5em minmax(0,1fr) 4.2em;gap:10px;align-items:center;padding:2px 0}
+.sl output{text-align:right;font-size:22px}
+.sl label small{display:block;color:var(--mute);line-height:1.1}
+@media (max-width:600px){.sl{grid-template-columns:1fr 4.2em}.sl input{grid-column:1/-1;grid-row:2}}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.pb{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);min-height:42px}
+.pb:hover{border-color:var(--acc)}
+.inj{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.ij{text-align:left;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);min-height:58px;display:flex;gap:8px;align-items:flex-start;font-size:15px;line-height:1.25}
+.ij .dot{margin-top:4px}
+.ij.on.hi{background:var(--red);color:#fff;border-color:var(--red)}.ij.on.me{background:var(--yel);color:#111;border-color:var(--yel)}.ij.on.lo{background:var(--blu);color:#fff;border-color:var(--blu)}
+.ij.on .dot{background:currentColor}
+.cf{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.cf input,.cf select{padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);font-size:16px;min-height:44px}
+.cf input{flex:1 1 200px}
+.ibtn{padding:8px 14px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;min-height:44px;font-weight:600}
+.ibtn.ghost{background:transparent;color:var(--acc)}
+.tg{display:flex;align-items:center;gap:10px;margin:4px 0}
+.tg input[type=checkbox]{width:22px;height:22px;accent-color:var(--acc)}
+#inst .lim{--lline:var(--line);grid-template-columns:1fr 1fr}#inst .lim>span:first-child{grid-column:1/-1}#inst .lim.h{display:none}#inst .lim>span:nth-child(2):empty{display:none}#inst .lim>.stepper:only-of-type{grid-column:2}
+#inst .lim.h{color:var(--mute)}
+#inst .stepper button{background:var(--bg);border-color:var(--line);color:var(--ink)}
+.log{max-height:340px;overflow:auto;font-size:15px}
+.log div{display:grid;grid-template-columns:5.2em minmax(0,1fr);gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
+.log time{color:var(--mute);font-variant-numeric:tabular-nums}
+.log .ins span{color:var(--acc)}
+.empty{color:var(--mute);font-size:15px}
+</style>
+</head>
+<body>
+
+<section id="start">
+  <div class="st">
+    <h1>Симулятор ИВЛ в стиле Hamilton T1</h1>
+    <p>Откройте эту страницу на двух устройствах с одним кодом сессии. На одном — экран аппарата для обучаемого: режимы, параметры, пределы тревог. На другом — пульт инструктора: пациент, частота и объём, тревоги и технические ошибки.</p>
+    <div class="code"><label for="code">Код сессии<input id="code" class="num" maxlength="20" autocomplete="off" spellcheck="false"></label><small style="color:var(--mute);padding-bottom:10px">латиница и цифры, одинаковый на обоих устройствах</small></div>
+    <div class="roles">
+      <button class="role" data-role="vent">
+        <svg viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true"><path d="M0 52 L20 52 L24 18 L70 18 L74 52 L120 52 L124 18 L170 18 L174 52 L220 52 L224 18 L270 18 L274 52 L300 52" fill="none" stroke="#ffb020" stroke-width="2.5"/></svg>
+        <b>Аппарат ИВЛ</b><span>Экран для обучаемого: кривые, мониторинг, настройка режимов и параметров</span></button>
+      <button class="role" data-role="instructor">
+        <svg viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true"><rect x="14" y="14" width="60" height="36" rx="6" fill="#e0302b"/><rect x="84" y="14" width="60" height="36" rx="6" fill="#f2c200"/><rect x="154" y="14" width="60" height="36" rx="6" fill="#1d3a58"/><rect x="224" y="14" width="60" height="36" rx="6" fill="#1d3a58"/><path d="M160 40h48M230 32h48" stroke="#34d3c3" stroke-width="3"/></svg>
+        <b>Пульт инструктора</b><span>Пациент, частота и объём, тревоги и ошибки, журнал действий</span></button>
+    </div>
+    <p class="note" id="netNote">Связь: через интернет. Чтобы работать по Wi‑Fi без интернета, запустите локальный сервер (server.py) и откройте его адрес на обоих устройствах.</p>
+    <p class="note">Учебный симулятор. Не является продуктом Hamilton Medical и не используется для лечения. Физиология упрощена: однокомпартментная модель лёгких.</p>
+  </div>
+</section>
+
+<section id="vent" hidden>
+  <header class="vtop">
+    <button id="modeBtn" class="mode">APVcmv</button>
+    <button id="almBar" class="almbar">Нет тревог</button>
+    <button id="silBtn" class="ib" aria-label="Отключить звук тревоги на 2 минуты"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/><path d="M3 3l18 18"/></svg><span id="silT"></span></button>
+    <button class="ib" id="vNet" aria-label="Состояние связи"><span class="dot" id="vLink"></span><span id="vNetT" style="font-size:14px"></span></button><div class="clock"><span id="clock" class="num"></span></div>
+  </header>
+  <main class="vmain">
+    <div class="waves">
+      <div class="wave"><span class="wl">Paw, смH₂O</span><canvas id="cvP"></canvas></div>
+      <div class="wave"><span class="wl">Поток, л/мин</span><canvas id="cvF"></canvas></div>
+      <div class="wave"><span class="wl">Объём, мл</span><canvas id="cvV"></canvas></div>
+    </div>
+    <aside class="mon" id="mon"></aside>
+  </main>
+  <footer class="vbot">
+    <div class="ctrls" id="ctrls"></div>
+    <div class="tools">
+      <button class="tl" id="tAlm">Тревоги</button>
+      <button class="tl" id="tO2">O₂ 100%</button>
+      <button class="tl" id="tMan">Ручной вдох</button>
+      <button class="tl" id="tHold">Пауза вдоха</button>
+      <button class="tl" id="tStby">Ожидание</button>
+      <button class="tl sp" id="tSess">Сессия</button>
+    </div>
+  </footer>
+  <div class="stby" id="stby" hidden></div>
+</section>
+
+<section id="inst" hidden></section>
+<div class="sheet" id="sheet" hidden><div class="sb" id="sbody"></div></div>
+
+<script>
+{
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const uid=()=>Math.random().toString(36).slice(2,9);
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+const hms=t=>new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+const P={
+ Vt:{l:'Vt',u:'мл',min:20,max:2000,st:10,d:450},
+ Rate:{l:'Частота',u:'/мин',min:1,max:80,st:1,d:14},
+ TI:{l:'TI',u:'с',min:0.3,max:3,st:0.05,d:1},
+ Pcontrol:{l:'Pcontrol',u:'смH₂O',min:5,max:60,st:1,d:15},
+ Psupport:{l:'Psupport',u:'смH₂O',min:0,max:60,st:1,d:10},
+ PEEP:{l:'PEEP/CPAP',u:'смH₂O',min:0,max:35,st:1,d:5},
+ Oxygen:{l:'Кислород',u:'%',min:21,max:100,st:1,d:40},
+ Trigger:{l:'Flowtrigger',u:'л/мин',min:1,max:20,st:0.5,d:5},
+ ETS:{l:'ETS',u:'%',min:5,max:80,st:5,d:25},
+ MinVol:{l:'%MinVol',u:'%',min:25,max:350,st:5,d:100}
+};
+const VC=['Vt','Rate','TI','PEEP','Oxygen','Trigger'], SV=['Psupport','ETS'];
+const MODES={
+ 'APVcmv':{k:'apv',cmv:1,p:VC,d:'Давление адаптируется под заданный Vt'},
+ '(S)CMV':{k:'vc',cmv:1,p:VC,d:'Принудительная, контроль по объёму'},
+ 'PCV+':{k:'pc',cmv:1,p:['Pcontrol','Rate','TI','PEEP','Oxygen','Trigger'],d:'Принудительная, контроль по давлению'},
+ 'APVsimv':{k:'apv',simv:1,p:['Vt','Rate','TI',...SV,'PEEP','Oxygen','Trigger'],d:'SIMV с адаптивным давлением'},
+ 'SIMV':{k:'vc',simv:1,p:['Vt','Rate','TI',...SV,'PEEP','Oxygen','Trigger'],d:'SIMV по объёму'},
+ 'PSIMV+':{k:'pc',simv:1,p:['Pcontrol','Rate','TI',...SV,'PEEP','Oxygen','Trigger'],d:'SIMV по давлению'},
+ 'SPONT':{k:'ps',p:['Psupport','PEEP','Oxygen','Trigger','ETS'],d:'Поддержка давлением / CPAP'},
+ 'NIV':{k:'ps',niv:1,p:['Psupport','PEEP','Oxygen','Trigger','ETS'],d:'Неинвазивная, маска'},
+ 'ASV':{k:'asv',p:['MinVol','PEEP','Oxygen','Trigger','ETS'],d:'Цель — минутный объём по IBW'}
+};
+const LIMS=[['P','Давление','смH₂O',0,80,1],['MV','ExpMinVol','л/мин',0,50,0.5],['VT','Vt','мл',0,3000,10],['F','fTotal','/мин',0,99,1],['CO2','PetCO₂','мм рт.ст.',0,150,1],['SPO2','SpO₂','%',50,100,1]];
+const LIM0={P:[8,40],MV:[4,10],VT:[250,700],F:[8,35],CO2:[30,50],SPO2:[90,100],APN:20};
+const INJ=[['disc','Отключение пациента','hi'],['occl','Окклюзия контура','hi'],['leak','Утечка в контуре','me'],['o2','Сбой подачи O₂','hi'],['tf','Технический сбой: аварийный режим','hi'],['flows','Проверьте датчик потока','me'],['batl','Низкий заряд батареи','me'],['batc','Батарея разряжена','hi'],['pwr','Потеря внешнего питания','lo'],['fan','Перегрев: проверьте вентилятор','me'],['cal','Требуется калибровка датчика потока','lo']];
+const PAT0={C:50,R:10,rate:0,eff:0,leak:0,spo2:97,co2:38};
+const PRESETS={'Норма':PAT0,'ОРДС':{C:22,R:12,rate:0,eff:0,leak:0,spo2:88,co2:48},'Бронхоспазм':{C:45,R:35,rate:0,eff:0,leak:0,spo2:91,co2:58},'Пневмоторакс':{C:15,R:14,rate:0,eff:0,leak:0,spo2:82,co2:52},'Пробуждение':{C:50,R:10,rate:16,eff:5,leak:0,spo2:96,co2:40},'Тахипноэ':{C:40,R:12,rate:34,eff:10,leak:0,spo2:90,co2:31},'Апноэ на CPAP':{C:50,R:10,rate:0,eff:0,leak:0,spo2:95,co2:45}};
+const PSL=[['C','Комплайнс','мл/смH₂O',5,100,1],['R','Сопротивление','смH₂O/л/с',2,50,1],['rate','ЧД пациента','/мин',0,50,1],['eff','Усилие вдоха','смH₂O',0,20,1],['leak','Утечка','%',0,60,5],['spo2','SpO₂','%',50,100,1],['co2','PetCO₂','мм рт.ст.',0,90,1]];
+const MONS=[['ppk','Ppeak','смH₂O',0,1],['pmean','Pmean','смH₂O',0],['peep','PEEP','смH₂O',0],['vte','VTE','мл',0],['vti','VTI','мл',0],['mv','ExpMinVol','л/мин',1],['f','fTotal','/мин',0],['fsp','fSpont','/мин',0],['o2','Кислород','%',0],['spo2','SpO₂','%',0],['co2','PetCO₂','мм рт.ст.',0],['pplat','Pplat','смH₂O',0],['cstat','Cstat','мл/смH₂O',0]];
+const MAL={ppk:['ph','pl'],mv:['mvl','mvh'],vte:['vtl','vth'],f:['fh','fl'],co2:['co2l','co2h'],spo2:['spl'],o2:['o2l']};
+const PRI={hi:3,me:2,lo:1};
+const fmt=(k,v)=>v==null||isNaN(v)?'--':(k==='TI'?(+v).toFixed(2):k==='Trigger'?(+v).toFixed(1):Math.round(v));
+const fmtM=(k,v)=>v==null||isNaN(v)?'--':(k==='mv'?(+v).toFixed(1):Math.round(v));
+
+/* ---------- link: room (cross-device) + BroadcastChannel (same browser) ---------- */
+let room=null,bc=null,code='',lanSend=null,lanOk=false,roomErr='wait',mq=null,mqOk=false,mqUrl='';
+const BROKERS=(new URLSearchParams(location.search).get('broker')||'wss://broker.hivemq.com:8884/mqtt,wss://broker.emqx.io:8084/mqtt,wss://test.mosquitto.org:8081/mqtt').split(',');
+const MQ_ID=Math.random().toString(36).slice(2,10);const H={};
+const lanProbe=(async()=>{
+  if(!/^https?:$/.test(location.protocol))return null;
+  try{const ab=new AbortController();setTimeout(()=>ab.abort(),1500);
+    const r=await fetch('/api/info',{cache:'no-store',signal:ab.signal});if(!r.ok)return null;const j=await r.json();
+    return j&&Array.isArray(j.ips)?j:null}catch(e){return null}
+})();
+const lanUrls=info=>{if(!/^(\d+\.){3}\d+$|^localhost$/.test(location.hostname))return[location.origin+'/'];const port=location.port?':'+location.port:'';const hs=info.ips.length?info.ips:[location.hostname];return hs.map(h=>`http://${h}${port}/`)};
+function send(t,d){try{bc&&bc.postMessage({t,d})}catch(e){}if(lanSend)lanSend(t,d);if(mq&&mqOk)try{mq.publish('t1sim/'+code+'/'+t,JSON.stringify({from:MQ_ID,d}))}catch(e){}if(room&&room.connected())room.emit(t,d).catch(e=>{if(e&&e.code==='not_permitted')roomErr='perm'})}
+async function connectLan(c,info){
+  const me=uid();
+  const es=new EventSource('/api/events?room='+encodeURIComponent(c));
+  es.onopen=()=>{lanOk=true};es.onerror=()=>{lanOk=false};
+  es.onmessage=e=>{try{const m=JSON.parse(e.data);if(m&&m.from!==me&&H[m.t])H[m.t](m.d)}catch(x){}};
+  lanSend=(t,d)=>fetch('/api/send?room='+encodeURIComponent(c),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:me,t,d})}).catch(()=>{});
+}
+function netStat(){
+  if(mq)return mqOk?{ok:1,t:'Интернет: открытый канал'}:{t:'Интернет: подключение к каналу…',h:'Нужен интернет на обоих устройствах. Если не подключается долго — сеть может блокировать порты 8084/8884 (например, корпоративный Wi‑Fi). Попробуйте мобильный интернет.'};
+  if(lanSend)return lanOk?{ok:1,t:'Свой сервер: на связи'}:{t:'Нет связи с сервером',h:'Проверьте интернет/Wi‑Fi и что сервер запущен.'};
+  if(roomErr==='perm')return{t:'Нет прав на отправку',h:'Этот аккаунт может только смотреть страницу. Откройте её под тем же аккаунтом Claude, что и на другом устройстве, или дайте доступ «Редактор».'};
+  if(room){const n=room.peers().length;if(!room.connected())return{t:'Интернет: переподключение…',h:'Проверьте интернет на устройстве.'};
+    return n>1?{ok:1,t:`Интернет: устройств в сессии ${n}`}:{ok:1,warn:1,t:'Интернет: в сессии только это устройство',h:`Второе устройство ещё не подключилось к сессии «${code}». Проверьте, что код совпадает и там выбрана другая роль.`}}
+  if(roomErr==='wait')return{t:'Подключение…'};
+  if(roomErr==='noclaude')return{t:'Нет канала Claude',h:'Страница открыта не внутри Claude. Откройте ссылку claude.ai/artifact/… в браузере или приложении Claude, войдя в аккаунт.'};
+  return{t:'Нет связи через интернет',h:'Это устройство не может подключиться к каналу. Чаще всего: не выполнен вход в Claude или открыта публичная ссылка без входа. Войдите в тот же аккаунт Claude, что и на втором устройстве, и откройте страницу заново. Код: '+roomErr}
+}
+const netLabel=()=>netStat().t;
+function loadScript(src){return new Promise((ok,no)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)})}
+async function connectMq(c,bi=0){
+  try{if(!window.mqtt)await loadScript('https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js')}catch(e){try{await loadScript('https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js')}catch(x){roomErr='mqlib';return}}
+  mqUrl=BROKERS[bi%BROKERS.length];
+  const cl=window.mqtt.connect(mqUrl,{clientId:'t1_'+MQ_ID,clean:true,reconnectPeriod:3000,connectTimeout:8000});mq=cl;
+  let everOk=false;
+  cl.on('connect',()=>{mqOk=true;everOk=true;cl.subscribe('t1sim/'+c+'/+')});
+  cl.on('close',()=>{mqOk=false});cl.on('offline',()=>{mqOk=false});
+  cl.on('message',(topic,buf)=>{try{const m=JSON.parse(buf.toString());const t=topic.split('/').pop();if(m&&m.from!==MQ_ID&&H[t])H[t](m.d)}catch(e){}});
+  setTimeout(()=>{if(!everOk&&mq===cl&&bi+1<BROKERS.length){try{cl.end(true)}catch(e){}connectMq(c,bi+1)}},10000);
+}
+async function connect(c){
+  try{bc=new BroadcastChannel('t1sim-'+c);bc.onmessage=e=>{const m=e.data;m&&H[m.t]&&H[m.t](m.d)}}catch(e){}
+  const info=await lanProbe;if(info){connectLan(c,info);return}
+  try{
+    if(!window.claude||!window.claude.use){roomErr='noclaude';connectMq(c);return}
+    const lobby=await window.claude.use('room');if(!lobby){roomErr='null';return}
+    try{room=await lobby.join('t1-'+c);roomErr=''}catch(e){roomErr=(e&&e.code)||'join';return}
+    ['v','i','lim','log'].forEach(t=>room.on(t,m=>{if(!m.sameTab&&H[t])H[t](m.data)}));
+  }catch(e){room=null;roomErr=roomErr||'err'}
+}
+
+/* ---------- audio ---------- */
+let ac=null;
+document.addEventListener('pointerdown',()=>{try{if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();ac.resume()}catch(e){}},{passive:true});
+function beep(f,d,at){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.setValueAtTime(0,at);g.gain.linearRampToValueAtTime(.2,at+.02);g.gain.setValueAtTime(.2,at+d-.03);g.gain.linearRampToValueAtTime(0,at+d);o.connect(g).connect(ac.destination);o.start(at);o.stop(at+d+.05)}
+
+/* ---------- shared limits editor ---------- */
+function limsHTML(lim){
+  return `<div class="lim h"><span></span><span>Нижний</span><span>Верхний</span></div>`+LIMS.map(([k,l,u])=>`<div class="lim"><span>${l} <small>${u}</small></span>${[0,1].map(i=>`<div class="stepper"><button data-lk="${k}" data-i="${i}" data-d="-1" aria-label="${l}, ${i?'верхний':'нижний'} предел меньше">−</button><span class="num">${lim[k][i]}</span><button data-lk="${k}" data-i="${i}" data-d="1" aria-label="${l}, ${i?'верхний':'нижний'} предел больше">+</button></div>`).join('')}</div>`).join('')
+  +`<div class="lim"><span>Время апноэ <small>с</small></span><span></span><div class="stepper"><button data-lk="APN" data-d="-1" aria-label="Время апноэ меньше">−</button><span class="num">${lim.APN}</span><button data-lk="APN" data-d="1" aria-label="Время апноэ больше">+</button></div></div>`;
+}
+function limStep(lim,b){
+  const k=b.dataset.lk,d=+b.dataset.d;
+  if(k==='APN'){lim.APN=clamp(lim.APN+5*d,10,60);return ['APN',`Время апноэ: ${lim.APN} с`]}
+  const def=LIMS.find(x=>x[0]===k),i=+b.dataset.i;
+  const v=clamp(Math.round((lim[k][i]+d*def[5])*10)/10,def[3],def[4]);
+  if(i===0&&v>=lim[k][1]||i===1&&v<=lim[k][0])return null;
+  lim[k][i]=v;return [k,`Пределы ${def[1]}: ${lim[k][0]}–${lim[k][1]} ${def[2]}`];
+}
+const pend={};let pendT=0;
+function queueLog(key,text,fn){pend[key]=text;clearTimeout(pendT);pendT=setTimeout(()=>{Object.values(pend).forEach(fn);for(const k in pend)delete pend[k]},1500)}
+
+/* ---------- sheet ---------- */
+const sheet=$('#sheet'),sbody=$('#sbody');let sheetFn=null;
+function openSheet(html,fn){sbody.innerHTML=html;sheet.hidden=false;sheetFn=fn;const f=sbody.querySelector('button');f&&f.focus()}
+function closeSheet(){sheet.hidden=true;sheetFn=null}
+sheet.addEventListener('click',e=>{if(e.target===sheet)return closeSheet();sheetFn&&sheetFn(e)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!sheet.hidden)closeSheet()});
+
+/* =================================================================== VENTILATOR */
+function initVent(){
+  const saved=LS.get('t1vent',{});
+  const V={mode:MODES[saved.mode]?saved.mode:'APVcmv',s:{},standby:true,sex:saved.sex||'м',h:saved.h||175,o2en:0,holdReq:false,silUntil:0,
+    pat:{...PAT0},ovr:{},inj:{},cu:[],lim:JSON.parse(JSON.stringify(LIM0)),limTs:0,iAt:0,log:[],alarms:{}};
+  for(const k in P)V.s[k]=saved.s&&saved.s[k]!=null?saved.s[k]:P[k].d;
+  const save=()=>LS.set('t1vent',{mode:V.mode,s:V.s,sex:V.sex,h:V.h});
+  const IBW=()=>Math.max(3,Math.round((V.sex==='м'?50:45.5)+0.91*(V.h-152.4)));
+  const S={tt:0,ph:'exp',pt:0,Vol:0.25,flow:0,paw:0,nextM:0,curSp:false,peakF:0,adapt:12,pmusT:-1,nextPat:2,lastB:0,vti:0,vte:0,ppk:0,hitP:false,breaths:[],pmean:0,pplat:null,cstat:null,def:0,backup:false,v0:0.25,runStart:0,bStart:null};
+  const MON={};let asvT={f:15,vt:450,mv:7};
+  const N=600,bufP=new Float32Array(N).fill(NaN),bufF=new Float32Array(N).fill(NaN),bufV=new Float32Array(N).fill(NaN);let wi=0;
+
+  function addLog(x){const e={id:uid(),ts:Date.now(),x};V.log.push(e);if(V.log.length>100)V.log.shift();send('log',e)}
+  function asvTarget(){const ibw=IBW(),mv=0.1*ibw*V.s.MinVol/100,Vd=0.0022*ibw,RC=Math.max(0.2,V.pat.R*V.pat.C/1000),a=2*Math.PI**2/60;let f=15;
+    for(let i=0;i<20;i++){const x=Math.max(0.01,mv-f*Vd);f=(Math.sqrt(1+2*a*RC*x/Vd)-1)/(a*RC)}
+    f=clamp(Math.round(f),5,60);const vt=clamp(mv/f*1000,4.4*ibw,15*ibw);return{f,vt:Math.round(vt),mv}}
+  function mrate(){const m=MODES[V.mode];if(S.backup)return 12;if(m.k==='asv')return Math.max(0,asvT.f-(MON.fsp||0));return m.cmv||m.simv?V.s.Rate:0}
+  function pmus(dt){const p=V.pat;
+    if(p.rate>0&&p.eff>0){if(S.pmusT<0&&S.tt>=S.nextPat){S.pmusT=0;S.nextPat=S.tt+60/p.rate*(0.9+Math.random()*0.2)}}else S.nextPat=S.tt+1;
+    if(S.pmusT>=0){S.pmusT+=dt;if(S.pmusT>0.9){S.pmusT=-1;return 0}return p.eff*Math.sin(Math.PI*S.pmusT/0.9)}return 0}
+  function finalize(){
+    if(S.bStart==null)return;
+    const C=V.pat.C/1000,m=MODES[V.mode];
+    S.breaths.push({t:S.tt,vti:S.vti,vte:S.vte,ppk:S.ppk,sp:S.curSp,hit:S.hitP});if(S.breaths.length>40)S.breaths.shift();
+    const adaptive=(!S.curSp&&m.k==='apv')||m.k==='asv';
+    if(adaptive&&!V.inj.disc&&S.vte>0.005){const tgt=(m.k==='asv'?asvT.vt:V.s.Vt)/1000;S.adapt=clamp(S.adapt+clamp((tgt-S.vte)/C*0.7,-2,2),5,Math.max(5,V.lim.P[1]-10-V.s.PEEP))}
+    S.vte=0;S.lastB=S.tt;
+  }
+  function start(sp){
+    finalize();S.ph='insp';S.pt=0;S.curSp=sp;S.peakF=0;S.v0=S.Vol;S.vti=0;S.ppk=0;S.hitP=false;S.bStart=S.tt;
+    if(!sp){const r=mrate();S.nextM=r>0?S.tt+60/r:Infinity}else S.backup=false;
+  }
+  function endInsp(){if(V.holdReq&&!S.curSp){V.holdReq=false;S.ph='hold';S.pt=0;return}S.ph='exp';S.pt=0}
+  function step(dt){
+    S.tt+=dt;S.pt+=dt;
+    const st=V.s,m=MODES[V.mode],pm=pmus(dt);
+    const C=Math.max(0.003,V.pat.C/1000),R=Math.max(1,V.pat.R*(V.inj.occl?6:1)),disc=V.inj.disc;
+    if(V.standby||V.inj.tf){S.ph='exp';S.paw=0;S.flow=(-S.Vol/C+pm)/R;S.Vol+=S.flow*dt;if(V.standby)S.lastB=S.tt;S.pmean+=(S.paw-S.pmean)*dt/6;return}
+    if(S.ph==='exp'){
+      S.paw=st.PEEP;S.flow=(S.paw-S.Vol/C+pm)/R;
+      if(disc){S.paw=0.3;S.flow=0}
+      S.Vol+=S.flow*dt;if(S.flow<0)S.vte-=S.flow*dt;
+      const r=mrate(),Tc=r>0?60/r:99;
+      if(!disc&&S.pt>0.35&&S.flow*60>st.Trigger){
+        if(m.cmv||S.backup)start(false);
+        else if(m.simv)start(!(S.tt>=S.nextM-0.5*Tc));
+        else start(true);
+      }else if(r>0&&S.tt>=S.nextM)start(false);
+      else if(!m.cmv&&!m.simv&&m.k!=='asv'&&S.tt-S.lastB>V.lim.APN&&!S.backup){S.backup=true;S.nextM=S.tt}
+      if(r>0&&!isFinite(S.nextM))S.nextM=S.tt+Tc;
+    }else if(S.ph==='insp'){
+      const r=mrate(),TI=Math.min(S.backup?1:st.TI,r>0?0.8*60/r:3);
+      const k=S.curSp?(m.k==='asv'?'apvs':'ps'):S.backup?'pc':m.k==='asv'?'apv':m.k;
+      if(disc){S.paw=2;S.flow=1.5}
+      else if(k==='vc'){const f=st.Vt/1000/TI;S.flow=f;S.paw=S.Vol/C+f*R-pm;if(S.paw>=V.lim.P[1]){S.hitP=true;S.paw=V.lim.P[1];S.Vol+=S.flow*dt;S.vti+=S.flow*dt;S.ppk=Math.max(S.ppk,S.paw);return endInsp()}}
+      else{let pi=k==='pc'?(S.backup?Math.max(10,st.Psupport):st.Pcontrol):k==='apv'||k==='apvs'?S.adapt:st.Psupport;
+        pi=clamp(pi,0,Math.max(0,V.lim.P[1]-10-st.PEEP));S.paw=st.PEEP+pi*Math.min(1,S.pt/0.06);S.flow=(S.paw-S.Vol/C+pm)/R}
+      if(!disc)S.Vol+=S.flow*dt;if(S.flow>0)S.vti+=S.flow*dt;
+      S.ppk=Math.max(S.ppk,S.paw);S.peakF=Math.max(S.peakF,S.flow);
+      if(!S.curSp&&S.pt>=TI)endInsp();
+      else if(S.curSp&&S.pt>0.2&&(S.flow<=st.ETS/100*S.peakF||S.pt>(m.niv?2:3)))endInsp();
+    }else{S.flow=0;S.paw=S.Vol/C-pm;if(S.pt>=1.5){S.pplat=S.paw;S.cstat=(S.Vol-S.v0)*1000/Math.max(1,S.pplat-st.PEEP);S.ph='exp';S.pt=0}}
+    S.pmean+=(S.paw-S.pmean)*dt/6;
+  }
+  function sample(){
+    const off=V.standby,fs=V.inj.flows;
+    bufP[wi]=off?NaN:S.paw;bufF[wi]=off||fs?NaN:S.flow*60;bufV[wi]=off||fs?NaN:Math.max(0,(S.Vol-S.v0)*1000);
+    wi=(wi+1)%N;for(let j=0;j<10;j++){const q=(wi+j)%N;bufP[q]=bufF[q]=bufV[q]=NaN}
+  }
+  function monitor(dt){
+    for(const k in MON)delete MON[k];
+    const hyp=V.inj.disc||V.inj.tf||V.inj.o2||V.standby;
+    S.def=clamp(S.def+(hyp?0.25:-0.5)*dt,0,40);
+    if(V.standby)return;
+    asvT=asvTarget();
+    const b=S.breaths.filter(x=>x.t>=S.runStart),el=S.tt-S.runStart,rec=b.filter(x=>S.tt-x.t<=30);
+    let f=null,fsp=null;
+    if(el>=30){f=rec.length*2;fsp=rec.filter(x=>x.sp).length*2}
+    else if(b.length>=2){const l=b.slice(-5);f=(l.length-1)*60/Math.max(.5,l[l.length-1].t-l[0].t);fsp=f*l.filter(x=>x.sp).length/l.length}
+    const lf=Math.max(V.pat.leak,V.inj.leak?35:0)/100,last=b[b.length-1],l3=b.slice(-3);
+    let vte=l3.length?l3.reduce((a,x)=>a+x.vte,0)/l3.length*(1-lf)*1000:null;
+    let vti=last?last.vti*1000:null;
+    if(V.ovr.fOn)f=V.ovr.f;if(V.ovr.vOn)vte=V.ovr.v;
+    const fs=V.inj.flows,amb=V.inj.tf;
+    Object.assign(MON,{ppk:amb?0:last?last.ppk:null,pmean:S.pmean,peep:amb||V.inj.disc?0:V.s.PEEP,vte:fs?null:vte,vti:fs?null:vti,mv:fs||vte==null||f==null?null:vte*f/1000,f,fsp,
+      o2:V.inj.o2?21:V.o2en>Date.now()?100:V.s.Oxygen,spo2:Math.round(V.pat.spo2-S.def),co2:f==null?null:V.inj.disc||amb||!f?0:V.pat.co2,pplat:S.pplat,cstat:S.cstat});
+  }
+  function evalAlarms(){
+    const want={},M=MON,L=V.lim,run=!V.standby&&S.tt-S.runStart>8;
+    if(run){
+      const last=S.breaths[S.breaths.length-1];
+      if(last&&last.hit)want.ph=['Давление высокое','hi'];
+      if(M.ppk!=null&&M.ppk<L.P[0])want.pl=['Давление низкое','hi'];
+      if(M.mv!=null){if(M.mv<L.MV[0])want.mvl=['ExpMinVol низкий','hi'];if(M.mv>L.MV[1])want.mvh=['ExpMinVol высокий','me']}
+      if(M.vte!=null){if(M.vte<L.VT[0])want.vtl=['Vt низкий','me'];if(M.vte>L.VT[1])want.vth=['Vt высокий','me']}
+      if(M.f!=null){if(M.f>L.F[1])want.fh=['fTotal высокая','me'];if(M.f<L.F[0])want.fl=['fTotal низкая','me']}
+      if(S.tt-S.lastB>L.APN)want.apn=['Апноэ','hi'];
+      if(S.backup)want.bk=['Резервная вентиляция (апноэ)','me'];
+      if(M.co2!=null){if(M.co2<L.CO2[0])want.co2l=['PetCO₂ низкое','me'];if(M.co2>L.CO2[1])want.co2h=['PetCO₂ высокое','me']}
+      if(M.spo2!=null&&M.spo2<L.SPO2[0])want.spl=['SpO₂ низкая','hi'];
+      if(M.o2<V.s.Oxygen-5)want.o2l=['Кислород низкий','hi'];
+    }
+    INJ.forEach(([id,t,p])=>{if(V.inj[id])want['x'+id]=[t,p]});
+    V.cu.forEach(c=>want['c'+c.id]=[c.t,c.p]);
+    const now=Date.now();
+    for(const id in want){const a=V.alarms[id];if(!a||!a.act){V.alarms[id]={t:want[id][0],p:want[id][1],since:now,act:true};addLog('Тревога: '+want[id][0])}}
+    for(const id in V.alarms){const a=V.alarms[id];if(!want[id]&&a.act){if(id[0]==='x'||id[0]==='c')delete V.alarms[id];else a.act=false}}
+  }
+  const sorted=()=>Object.entries(V.alarms).map(([id,a])=>({id,...a})).sort((a,b)=>(b.act-a.act)||(PRI[b.p]-PRI[a.p])||(b.since-a.since));
+  let nextSnd=0,lastTop='';
+  function sound(){
+    const top=sorted().find(a=>a.act),now=Date.now();
+    if(!top){lastTop='';return}
+    if(top.id!==lastTop){lastTop=top.id;nextSnd=0}
+    if(!ac||now<V.silUntil||now<nextSnd)return;
+    const t=ac.currentTime+.05;
+    if(top.p==='hi'){[0,.22,.44,1,1.22].forEach(x=>beep(880,.16,t+x));nextSnd=now+5000}
+    else if(top.p==='me'){[0,.3,.6].forEach(x=>beep(660,.2,t+x));nextSnd=now+10000}
+    else{beep(520,.3,t);nextSnd=now+20000}
+  }
+  function renderAlm(){
+    const a=sorted(),act=a.filter(x=>x.act),bar=$('#almBar'),top=act[0]||a[0];
+    bar.className='almbar'+(top?' '+(top.act?top.p:'off'):'');
+    bar.innerHTML=top?`<span>${top.act?'':'Неактивна: '}${esc(top.t)}</span>${act.length>1?`<span class="cnt">ещё ${act.length-1}</span>`:''}`:'<span>Нет тревог</span>';
+    const sil=V.silUntil-Date.now();$('#silBtn').classList.toggle('on',sil>0);
+    $('#silT').textContent=sil>0?`${Math.floor(sil/60000)}:${String(Math.floor(sil/1000)%60).padStart(2,'0')}`:'';
+    const o2=V.o2en-Date.now();$('#tO2').classList.toggle('on',o2>0);$('#tO2').textContent=o2>0?`O₂ 100% · ${Math.ceil(o2/1000)} с`:'O₂ 100%';
+    $('#tHold').classList.toggle('on',V.holdReq);
+    {const okI=Date.now()-V.iAt<5000,ns=netStat();$('#vLink').classList.toggle('ok',okI);$('#vNetT').textContent=okI?'Пульт на связи':ns.h?ns.t:'Пульт не найден';$('#vNet').style.borderColor=okI?'#2fd17a':ns.h?'var(--yel)':''}
+    $('#clock').textContent=new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  }
+  function renderMon(){
+    const act=new Set(Object.entries(V.alarms).filter(([,a])=>a.act).map(([id])=>id));
+    $('#mon').innerHTML=MONS.map(([k,l,u,,big])=>`<div class="mv${big?' big':''}${(MAL[k]||[]).some(x=>act.has(x))?' al':''}"><div class="n"><span>${l}</span><span>${u}</span></div><div class="v">${V.standby?'--':fmtM(k,MON[k])}</div></div>`).join('');
+  }
+  function renderCtrls(){
+    const m=MODES[V.mode];$('#modeBtn').textContent=V.mode;
+    $('#ctrls').innerHTML=m.p.map(k=>`<button class="ct" data-k="${k}"><small>${P[k].l}</small><b>${fmt(k,V.s[k])}</b><small>${P[k].u}</small></button>`).join('')
+      +(m.k==='asv'?`<div class="ct info"><small>ASV · IBW ${IBW()} кг</small><b class="num">f ${asvT.f} · Vt ${asvT.vt}</b><small>цель ${asvT.mv.toFixed(1)} л/мин</small></div>`:'');
+  }
+  // canvases
+  const cvs=[['#cvP',bufP,'#ffb020'],['#cvF',bufF,'#34d3c3'],['#cvV',bufV,'#9cb6ff']].map(([s,b,c])=>({el:$(s),b,c}));
+  const ro=new ResizeObserver(()=>cvs.forEach(o=>{const d=devicePixelRatio||1;o.el.width=Math.max(1,o.el.clientWidth*d);o.el.height=Math.max(1,o.el.clientHeight*d)}));
+  cvs.forEach(o=>ro.observe(o.el));
+  function drawWave(o,lo,hi,zero){
+    const d=devicePixelRatio||1,ctx=o.el.getContext('2d'),W=o.el.width,Hh=o.el.height,pad=8*d,yy=v=>Hh-pad-(v-lo)/(hi-lo)*(Hh-2*pad);
+    ctx.clearRect(0,0,W,Hh);ctx.strokeStyle='#17222f';ctx.lineWidth=1;ctx.beginPath();
+    for(let i=1;i<4;i++){const y=pad+(Hh-2*pad)*i/4;ctx.moveTo(0,y);ctx.lineTo(W,y)}ctx.stroke();
+    if(zero){ctx.strokeStyle='#2c3d55';ctx.beginPath();ctx.moveTo(0,yy(0));ctx.lineTo(W,yy(0));ctx.stroke()}
+    ctx.fillStyle='#62748b';ctx.font=`${11*d}px Barlow`;ctx.textAlign='right';ctx.fillText(hi,W-6*d,pad+10*d);ctx.fillText(lo,W-6*d,Hh-pad-2*d);
+    ctx.strokeStyle=o.c;ctx.lineWidth=2*d;ctx.lineJoin='round';ctx.beginPath();let pen=false;
+    for(let i=0;i<N;i++){const v=o.b[i];if(isNaN(v)){pen=false;continue}const x=i/(N-1)*W,y=yy(clamp(v,lo,hi));if(pen)ctx.lineTo(x,y);else{ctx.moveTo(x,y);pen=true}}
+    ctx.stroke();
+  }
+  function draw(){
+    const pm=Math.max(40,Math.ceil((V.lim.P[1]+5)/10)*10),vm=Math.max(600,Math.ceil((MODES[V.mode].k==='asv'?asvT.vt:V.s.Vt)*1.5/100)*100);
+    drawWave(cvs[0],0,pm);drawWave(cvs[1],-90,90,true);drawWave(cvs[2],0,vm);
+  }
+  function renderStby(){
+    const el=$('#stby');el.hidden=!V.standby;if(!V.standby)return;
+    el.innerHTML=`<div class="sb"><h3>Ожидание</h3><p>Пациент: укажите пол и рост — от них считается идеальная масса тела (IBW).</p>
+      <div class="tabs"><button data-sex="м" class="${V.sex==='м'?'sel':''}">Мужчина</button><button data-sex="ж" class="${V.sex==='ж'?'sel':''}">Женщина</button></div>
+      <div class="lim"><span>Рост <small>см</small></span><span></span><div class="stepper"><button data-h="-1" aria-label="Рост меньше">−</button><span class="num">${V.h}</span><button data-h="1" aria-label="Рост больше">+</button></div></div>
+      <div class="lim"><span>IBW</span><span></span><b class="num" style="font-size:26px">${IBW()} кг</b></div>
+      <p style="margin-top:12px">Режим: <b style="color:#fff">${V.mode}</b> · Vt ${V.s.Vt} мл (${(V.s.Vt/IBW()).toFixed(1)} мл/кг)</p>
+      <div class="row"><button class="btn" data-a="vt8">Vt = 8 мл/кг (${Math.round(8*IBW()/10)*10} мл)</button><button class="btn" data-a="mode">Режим…</button><button class="btn pri" data-a="go">Начать вентиляцию</button></div></div>`;
+  }
+  $('#stby').addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.sex){V.sex=b.dataset.sex;save()}
+    if(b.dataset.h){V.h=clamp(V.h+5*b.dataset.h,130,210);save()}
+    if(b.dataset.a==='vt8')applySet('Vt',Math.round(8*IBW()/10)*10);
+    if(b.dataset.a==='mode')openMode();
+    if(b.dataset.a==='go'){V.standby=false;S.runStart=S.tt;S.lastB=S.tt;S.nextM=S.tt+0.3;S.backup=false;S.adapt=12;S.pplat=S.cstat=null;addLog(`Начало вентиляции: ${V.mode}, IBW ${IBW()} кг`);pushV()}
+    renderStby();renderCtrls();
+  });
+  function applySet(k,v){const o=V.s[k];if(o===v)return;V.s[k]=v;addLog(`${P[k].l}: ${fmt(k,o)} → ${fmt(k,v)} ${P[k].u}`);save();renderCtrls();
+    const r=mrate();if(r>0)S.nextM=Math.min(S.nextM,S.tt+60/r);pushV()}
+  function openAdj(k){
+    const d=P[k];let v=V.s[k];
+    const paint=()=>{sbody.querySelector('.val').innerHTML=`${fmt(k,v)}<small>${d.u}</small>`;sbody.querySelector('input').value=v};
+    openSheet(`<h3>${d.l}</h3><p>Сейчас: ${fmt(k,V.s[k])} ${d.u}. Измените и подтвердите.</p>
+      <div class="adj"><button data-d="-1" aria-label="Меньше">−</button><div class="val num"></div><button data-d="1" aria-label="Больше">+</button></div>
+      <input type="range" min="${d.min}" max="${d.max}" step="${d.st}" aria-label="${d.l}">
+      <div class="row"><button class="btn" data-a="x">Отмена</button><button class="btn pri" data-a="ok">Подтвердить</button></div>`,e=>{
+      const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.d){v=clamp(Math.round((v+d.st*b.dataset.d)*100)/100,d.min,d.max);paint()}
+      if(b.dataset.a==='x')closeSheet();
+      if(b.dataset.a==='ok'){applySet(k,v);closeSheet()}
+    });
+    sbody.querySelector('input').addEventListener('input',e=>{v=+e.target.value;paint()});paint();
+  }
+  function openMode(){
+    let sel=V.mode;
+    const html=()=>`<h3>Режимы вентиляции</h3><p>Выберите режим и подтвердите. Параметры сохраняются.</p><div class="mgrid">${Object.entries(MODES).map(([n,m])=>`<button class="mb${n===sel?' sel':''}" data-m="${esc(n)}"><b>${n}</b><small>${m.d}</small></button>`).join('')}</div>
+      <div class="row"><button class="btn" data-a="x">Отмена</button><button class="btn pri" data-a="ok">Подтвердить</button></div>`;
+    openSheet(html(),e=>{const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.m){sel=b.dataset.m;sbody.innerHTML=html();return}
+      if(b.dataset.a==='x')closeSheet();
+      if(b.dataset.a==='ok'){if(sel!==V.mode){addLog(`Режим: ${V.mode} → ${sel}`);V.mode=sel;S.backup=false;S.nextM=S.tt+0.5;save();renderCtrls();renderStby();pushV()}closeSheet()}
+    });
+  }
+  function openAlarms(tab){
+    tab=tab||'buf';
+    const html=()=>{const a=sorted();return `<h3>Тревоги</h3><div class="tabs"><button data-t="buf" class="${tab==='buf'?'sel':''}">Журнал</button><button data-t="lim" class="${tab==='lim'?'sel':''}">Пределы</button></div>`+
+      (tab==='buf'?`<div class="alist">${a.length?a.map(x=>`<div class="ai${x.act?'':' off'}"><span class="dot" style="background:${x.act?{hi:'var(--red)',me:'var(--yel)',lo:'var(--blu)'}[x.p]:'#6b7788'}"></span><span>${esc(x.t)}</span><time>${hms(x.since)}</time></div>`).join(''):'<p>Тревог нет.</p>'}</div>
+        <div class="row"><button class="btn" data-a="reset">Сбросить неактивные</button><button class="btn pri" data-a="x">Закрыть</button></div>`
+      :limsHTML(V.lim)+`<div class="row"><button class="btn pri" data-a="x">Готово</button></div>`)};
+    openSheet(html(),e=>{const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.t){tab=b.dataset.t}
+      else if(b.dataset.a==='x')return closeSheet();
+      else if(b.dataset.a==='reset'){for(const id in V.alarms)if(!V.alarms[id].act)delete V.alarms[id];addLog('Сброс неактивных тревог');renderAlm()}
+      else if(b.dataset.lk){const r=limStep(V.lim,b);if(r){V.limTs=Date.now();send('lim',{lim:V.lim,ts:V.limTs});queueLog(r[0],r[1],addLog)}}
+      sbody.innerHTML=html();
+    });
+  }
+  $('#ctrls').addEventListener('click',e=>{const b=e.target.closest('button.ct');if(b&&b.dataset.k)openAdj(b.dataset.k)});
+  $('#modeBtn').onclick=openMode;$('#almBar').onclick=()=>openAlarms('buf');$('#tAlm').onclick=()=>openAlarms('buf');
+  $('#silBtn').onclick=()=>{if(V.silUntil>Date.now()){V.silUntil=0;addLog('Звук тревог включён')}else{V.silUntil=Date.now()+120000;addLog('Звук тревог отключён на 2 мин')}renderAlm()};
+  $('#tO2').onclick=()=>{if(V.o2en>Date.now()){V.o2en=0;addLog('O₂ 100% отменено')}else{V.o2en=Date.now()+120000;addLog('O₂ 100% на 2 мин')}renderAlm()};
+  $('#tMan').onclick=()=>{if(!V.standby&&!V.inj.tf&&S.ph==='exp'){start(false);addLog('Ручной вдох')}};
+  $('#tHold').onclick=()=>{if(!V.standby){V.holdReq=!V.holdReq;if(V.holdReq)addLog('Пауза вдоха');renderAlm()}};
+  $('#tStby').onclick=()=>{if(V.standby)return;openSheet(`<h3>Перевести в ожидание?</h3><p>Вентиляция будет остановлена.</p><div class="row"><button class="btn" data-a="x">Отмена</button><button class="btn warn" data-a="ok">Остановить</button></div>`,e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.a==='ok'){V.standby=true;addLog('Режим ожидания');renderStby();pushV()}closeSheet()})};
+  $('#vNet').onclick=()=>$('#tSess').click();
+  $('#tSess').onclick=()=>openSheet(`<h3>Сессия «${esc(code)}»</h3><p>На втором устройстве откройте эту же страницу, введите код <b style="color:#fff">${esc(code)}</b> и выберите «Пульт инструктора».</p><p>Связь с пультом: ${Date.now()-V.iAt<5000?'есть':'нет'}. Канал: ${netLabel()}.</p>${netStat().h?`<p style="color:#ffd36b">${esc(netStat().h)}</p>`:''}<div id="lanBox"></div><div class="row"><button class="btn" data-a="role">Сменить роль</button><button class="btn pri" data-a="x">Закрыть</button></div>`,e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.a==='role'){location.hash='';location.reload()}closeSheet()});
+  $('#tSess').addEventListener('click',()=>lanProbe.then(info=>{const el=$('#lanBox');if(info&&el)el.innerHTML='<p>Адрес для второго устройства:</p>'+lanUrls(info).map(u=>`<p class="num" style="font-size:24px;color:#fff;margin:0 0 6px">${esc(u)}</p>`).join('')}));
+
+  function pushV(){
+    const M={};for(const k in MON)M[k]=MON[k]==null?null:Math.round(MON[k]*10)/10;
+    send('v',{mode:V.mode,s:V.s,sb:V.standby,ibw:IBW(),o2en:V.o2en>Date.now(),M,al:sorted().slice(0,10).map(a=>({t:a.t,p:a.p,a:a.act?1:0})),lim:V.lim,limTs:V.limTs,lg:V.log.slice(-3),asv:MODES[V.mode].k==='asv'?asvT:null});
+  }
+  H.i=d=>{if(!d)return;V.iAt=Date.now();V.pat={...PAT0,...d.pat};V.ovr=d.ovr||{};V.inj=d.inj||{};V.cu=Array.isArray(d.cu)?d.cu.slice(0,8):[];if(d.limTs>V.limTs){V.lim=d.lim;V.limTs=d.limTs}};
+  H.lim=d=>{if(d&&d.ts>V.limTs){V.lim=d.lim;V.limTs=d.ts;if(!sheet.hidden&&sbody.querySelector('.lim:not(.h) .stepper'))openAlarms('lim')}};
+  setInterval(pushV,1000);
+
+  const DT=0.004;let last=performance.now(),acc=0,sacc=0,slow=0;
+  function frame(now){
+    const el=Math.min(0.1,(now-last)/1000);last=now;acc+=el;
+    while(acc>=DT){step(DT);acc-=DT;sacc+=DT;if(sacc>=0.02){sacc-=0.02;sample()}}
+    slow+=el;if(slow>=0.5){monitor(slow);slow=0;evalAlarms();renderMon();renderAlm();sound();if(MODES[V.mode].k==='asv')renderCtrls()}
+    draw();requestAnimationFrame(frame);
+  }
+  renderCtrls();renderMon();renderAlm();renderStby();requestAnimationFrame(frame);
+}
+
+/* =================================================================== INSTRUCTOR */
+function initInst(){
+  const sv=LS.get('t1inst',{});
+  const I={pat:{...PAT0,...sv.pat},ovr:{fOn:false,f:30,vOn:false,v:300,...sv.ovr},inj:{},cu:[],lim:JSON.parse(JSON.stringify(LIM0)),limTs:0,vs:null,vAt:0,log:new Map()};
+  const root=$('#inst');
+  const save=()=>LS.set('t1inst',{pat:I.pat,ovr:I.ovr});
+  function pushI(){send('i',{pat:I.pat,ovr:I.ovr,inj:I.inj,cu:I.cu,lim:I.lim,limTs:I.limTs});save()}
+  let thr=0;const pushSoon=()=>{if(thr)return;thr=setTimeout(()=>{thr=0;pushI()},200)};
+  function ilog(x){const e={id:uid(),ts:Date.now(),x,ins:1};I.log.set(e.id,e);renderLog()}
+  function vlog(e){if(e&&e.id&&!I.log.has(e.id)){I.log.set(e.id,{id:e.id,ts:e.ts,x:String(e.x).slice(0,120)});renderLog()}}
+
+  root.innerHTML=`<div class="ih"><h1>Пульт инструктора</h1><span class="pill num">Сессия: ${esc(code)}</span><span class="pill" id="iLink"></span><span class="pill" id="iNet"></span><a class="pill" href="#" id="iRole">Сменить роль</a></div><p class="card" id="iHint" hidden style="margin:0 0 14px;border-color:var(--red)"></p>
+  <div class="grid">
+    <div class="card mirror" id="mirror"></div>
+    <div class="card"><h2>Пациент</h2><p class="sub">Механика лёгких и собственное дыхание. Изменения сразу идут на аппарат.</p>
+      <div class="presets">${Object.keys(PRESETS).map(n=>`<button class="pb" data-pre="${n}">${n}</button>`).join('')}</div>
+      <div id="psl">${PSL.map(([k,l,u,mn,mx,st])=>`<div class="sl"><label for="p_${k}">${l}<small>${u}</small></label><input type="range" id="p_${k}" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><output class="num" id="o_${k}"></output></div>`).join('')}</div>
+    </div>
+    <div class="card"><h2>Частота и объём на мониторе</h2><p class="sub">Подмена показаний fTotal и VTE на экране аппарата. ExpMinVol пересчитывается, тревоги срабатывают по пределам.</p>
+      <label class="tg"><input type="checkbox" id="ofOn"> Задать fTotal</label>
+      <div class="sl"><label for="of">fTotal<small>/мин</small></label><input type="range" id="of" min="0" max="60" step="1"><output class="num" id="oof"></output></div>
+      <label class="tg" style="margin-top:10px"><input type="checkbox" id="ovOn"> Задать VTE</label>
+      <div class="sl"><label for="ov">VTE<small>мл</small></label><input type="range" id="ov" min="0" max="1500" step="10"><output class="num" id="oov"></output></div>
+      <p class="sub" style="margin-top:12px">Чтобы частота и объём менялись по-настоящему (с кривыми), используйте «ЧД пациента», «Усилие вдоха» и «Комплайнс».</p>
+    </div>
+    <div class="card"><h2>Тревоги и ошибки</h2><p class="sub">Нажмите, чтобы включить или снять. Отключение, окклюзия, утечка, сбой O₂, датчик потока и аварийный режим меняют кривые и показатели.</p>
+      <div class="inj" id="inj"></div>
+      <form class="cf" id="cf"><input id="cfT" maxlength="60" placeholder="Своя тревога, напр. «Проверьте контур»" aria-label="Текст своей тревоги"><select id="cfP" aria-label="Приоритет"><option value="hi">Высокий</option><option value="me" selected>Средний</option><option value="lo">Низкий</option></select><button class="ibtn">Добавить</button></form>
+      <div class="chips" id="cul" style="margin-top:10px"></div>
+    </div>
+    <div class="card"><h2>Пределы тревог</h2><p class="sub">Общие с аппаратом: обучаемый может менять их сам, изменения видны здесь.</p><div id="ilims"></div></div>
+    <div class="card"><h2>Журнал действий</h2><p class="sub">Действия обучаемого на аппарате и ваши вводные — для дебрифинга.</p>
+      <div class="row" style="justify-content:flex-start;margin:0 0 8px"><button class="ibtn ghost" id="lgCopy">Копировать журнал</button><button class="ibtn ghost" id="lgClr">Очистить</button></div>
+      <div class="log" id="log"></div></div>
+  </div>`;
+
+  function renderPat(){PSL.forEach(([k,,u])=>{$('#p_'+k).value=I.pat[k];$('#o_'+k).textContent=I.pat[k]})}
+  function renderOvr(){$('#ofOn').checked=I.ovr.fOn;$('#ovOn').checked=I.ovr.vOn;$('#of').value=I.ovr.f;$('#ov').value=I.ovr.v;$('#oof').textContent=I.ovr.f;$('#oov').textContent=I.ovr.v}
+  function renderInj(){
+    $('#inj').innerHTML=INJ.map(([id,t,p])=>`<button class="ij ${p}${I.inj[id]?' on':''}" data-id="${id}" aria-pressed="${!!I.inj[id]}"><span class="dot" style="background:${{hi:'var(--red)',me:'var(--yel)',lo:'var(--blu)'}[p]}"></span>${t}</button>`).join('');
+    $('#cul').innerHTML=I.cu.map(c=>`<button class="chip ${c.p}" data-cu="${c.id}" aria-label="Снять тревогу ${esc(c.t)}">${esc(c.t)} ✕</button>`).join('');
+  }
+  function renderLims(){$('#ilims').innerHTML=limsHTML(I.lim)}
+  function renderLog(){
+    const a=[...I.log.values()].sort((x,y)=>y.ts-x.ts);
+    $('#log').innerHTML=a.length?a.map(e=>`<div class="${e.ins?'ins':''}"><time>${hms(e.ts)}</time><span>${e.ins?'Инструктор: ':''}${esc(e.x)}</span></div>`).join(''):'<p class="empty">Пока пусто. Здесь появятся смены режимов, параметров, пределов и тревоги.</p>';
+  }
+  function renderMirror(){
+    const m=$('#mirror'),v=I.vs,ok=Date.now()-I.vAt<5000;
+    {const ns=netStat(),el=$('#iNet');el.className='pill '+(ns.ok&&!ns.warn?'ok':'bad');el.textContent=ns.t;const hh=$('#iHint');hh.hidden=!ns.h;hh.textContent=ns.h||''}const li=$('#iLink');li.className='pill '+(ok?'ok':'bad');li.innerHTML=`<span class="dot${ok?' ok':''}"></span>${ok?'Аппарат на связи':'Нет связи с аппаратом'}`;
+    if(!v){m.innerHTML=`<h2>Экран аппарата</h2><p class="sub">Откройте эту страницу на другом устройстве, введите код <b>${esc(code)}</b> и выберите «Аппарат ИВЛ». Состояние аппарата появится здесь.</p>`;return}
+    const md=MODES[v.mode]||MODES.APVcmv,act=new Set((v.al||[]).filter(a=>a.a).map(a=>a.t));
+    const alM={ppk:['Давление'],mv:['ExpMinVol'],vte:['Vt '],f:['fTotal'],co2:['PetCO'],spo2:['SpO'],o2:['Кислород']};
+    m.innerHTML=`<div class="mh"><span class="md">${esc(v.mode)}</span>${v.sb?'<span class="tag">Ожидание</span>':'<span class="tag" style="background:#0c4a38">Вентиляция</span>'}${v.o2en?'<span class="tag">O₂ 100%</span>':''}<span class="tag">IBW ${esc(v.ibw)} кг</span>${v.asv?`<span class="tag">ASV цель: f ${esc(v.asv.f)}, Vt ${esc(v.asv.vt)}</span>`:''}${ok?'':'<span class="tag" style="background:#7a2420">данные устарели</span>'}</div>
+      <div class="mir">${md.p.map(k=>`<div class="mi set"><small title="${P[k].u}">${P[k].l}</small><b>${fmt(k,v.s&&v.s[k])}</b></div>`).join('')}</div>
+      <div class="mir">${MONS.map(([k,l,u])=>`<div class="mi${(alM[k]||[]).some(s=>[...act].some(t=>t.startsWith(s)))?' al':''}"><small title="${u}">${l}</small><b>${v.sb?'--':fmtM(k,v.M&&v.M[k])}</b></div>`).join('')}</div>
+      <div class="chips">${(v.al||[]).length?(v.al||[]).map(a=>`<span class="chip ${a.a?esc(a.p):'off'}">${esc(a.t)}</span>`).join(''):'<span class="chip off">Тревог нет</span>'}</div>`;
+  }
+
+  root.addEventListener('click',e=>{
+    const b=e.target.closest('button,a');if(!b)return;
+    if(b.id==='iRole'){e.preventDefault();location.hash='';location.reload();return}
+    if(b.dataset.pre){I.pat={...PRESETS[b.dataset.pre]};renderPat();ilog('Сценарий пациента: '+b.dataset.pre);pushI()}
+    if(b.dataset.id){const id=b.dataset.id,t=INJ.find(x=>x[0]===id)[1];if(I.inj[id]){delete I.inj[id];ilog('Снята: '+t)}else{I.inj[id]=true;ilog('Включена: '+t)}renderInj();pushI()}
+    if(b.dataset.cu){const c=I.cu.find(x=>x.id===b.dataset.cu);I.cu=I.cu.filter(x=>x.id!==b.dataset.cu);c&&ilog('Снята: '+c.t);renderInj();pushI()}
+    if(b.dataset.lk){const r=limStep(I.lim,b);if(r){I.limTs=Date.now();renderLims();send('lim',{lim:I.lim,ts:I.limTs});queueLog(r[0],r[1],ilog)}}
+    if(b.id==='lgClr'){I.log.clear();renderLog()}
+    if(b.id==='lgCopy'){const t=[...I.log.values()].sort((x,y)=>x.ts-y.ts).map(e=>`${hms(e.ts)}\t${e.ins?'Инструктор: ':''}${e.x}`).join('\n');
+      navigator.clipboard&&navigator.clipboard.writeText(t).then(()=>{b.textContent='Скопировано';setTimeout(()=>b.textContent='Копировать журнал',1500)}).catch(()=>{b.textContent='Не удалось'})}
+  });
+  $('#psl').addEventListener('input',e=>{const k=e.target.dataset.k;if(!k)return;I.pat[k]=+e.target.value;$('#o_'+k).textContent=I.pat[k];pushSoon()});
+  $('#psl').addEventListener('change',e=>{const k=e.target.dataset.k;if(!k)return;const d=PSL.find(x=>x[0]===k);ilog(`${d[1]}: ${I.pat[k]} ${d[2]}`)});
+  const ovIn=(id,key)=>{$(id).addEventListener('input',e=>{I.ovr[key]=+e.target.value;renderOvr();pushSoon()})};
+  ovIn('#of','f');ovIn('#ov','v');
+  $('#of').addEventListener('change',()=>I.ovr.fOn&&ilog(`fTotal на мониторе: ${I.ovr.f}`));
+  $('#ov').addEventListener('change',()=>I.ovr.vOn&&ilog(`VTE на мониторе: ${I.ovr.v} мл`));
+  $('#ofOn').addEventListener('change',e=>{I.ovr.fOn=e.target.checked;ilog(e.target.checked?`fTotal задан: ${I.ovr.f}`:'fTotal: реальные данные');pushI()});
+  $('#ovOn').addEventListener('change',e=>{I.ovr.vOn=e.target.checked;ilog(e.target.checked?`VTE задан: ${I.ovr.v} мл`:'VTE: реальные данные');pushI()});
+  $('#cf').addEventListener('submit',e=>{e.preventDefault();const t=$('#cfT').value.trim();if(!t||I.cu.length>=6)return;const c={id:uid(),t,p:$('#cfP').value};I.cu.push(c);$('#cfT').value='';ilog('Включена: '+t);renderInj();pushI()});
+
+  H.v=d=>{if(!d)return;I.vs=d;I.vAt=Date.now();if(d.limTs>I.limTs){I.lim=d.lim;I.limTs=d.limTs;renderLims()}(d.lg||[]).forEach(vlog);renderMirror()};
+  H.log=vlog;
+  H.lim=d=>{if(d&&d.ts>I.limTs){I.lim=d.lim;I.limTs=d.ts;renderLims()}};
+  setInterval(pushI,1500);setInterval(renderMirror,2000);
+  renderPat();renderOvr();renderInj();renderLims();renderLog();renderMirror();pushI();
+}
+
+/* =================================================================== start */
+lanProbe.then(info=>{if(!info)return;$('#netNote').innerHTML='Связь: <b>через ваш сервер</b>. Откройте на втором устройстве: '+lanUrls(info).map(u=>`<b class="num">${esc(u)}</b>`).join(' или ')});
+const codeIn=$('#code');
+codeIn.value=LS.get('t1code','')||('sim-'+Math.random().toString(36).slice(2,7));
+function go(role){
+  code=(codeIn.value.toLowerCase().replace(/[^a-z0-9-]/g,'')||'icu1').slice(0,20);codeIn.value=code;LS.set('t1code',code);
+  if(location.hash!=='#'+role)history.replaceState(null,'','#'+role);
+  $('#start').hidden=true;connect(code);
+  if(role==='vent'){$('#vent').hidden=false;initVent()}else{$('#inst').hidden=false;initInst()}
+}
+document.querySelectorAll('.role').forEach(b=>b.addEventListener('click',()=>go(b.dataset.role)));
+const h=location.hash.slice(1);
+if((h==='vent'||h==='instructor')&&LS.get('t1code',''))go(h);
+}
+</script>
+</body>
+</html>
